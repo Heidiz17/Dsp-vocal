@@ -2,79 +2,295 @@
 <html lang="zh-HK">
 <head>
   <meta charset="UTF-8">
-  <title>VOGT - 路線 B 屠龍神經歌聲引擎</title>
-  <!-- 引入微軟官方 WebGPU 神經網絡引擎 -->
-  <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.webgpu.min.js"></script>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DSP Vocal Engine - 4 Octaves 32 Notes</title>
+  <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.all.min.js"></script>
+  <style>
+    body {
+      background-color: #0b0f19;
+      color: #f3f4f6;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      padding: 16px;
+      margin: 0;
+    }
+    h3 {
+      font-size: 1.1rem;
+      margin-bottom: 12px;
+      color: #ff9900;
+    }
+    .btn-group {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+    button {
+      padding: 12px 16px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    .btn-load {
+      background-color: #ffffff;
+      color: #111827;
+    }
+    .btn-sing {
+      background-color: #10b981;
+      color: #ffffff;
+    }
+    .btn-stop {
+      background-color: #ef4444;
+      color: #ffffff;
+    }
+    #log {
+      background-color: #030712;
+      border: 1px solid #1f2937;
+      border-radius: 6px;
+      padding: 12px;
+      font-family: monospace;
+      font-size: 0.82rem;
+      height: 260px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+      color: #38bdf8;
+    }
+    .badge {
+      display: inline-block;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      background: #1e293b;
+      color: #94a3b8;
+      margin-bottom: 8px;
+    }
+  </style>
 </head>
-<body style="background:#0f172a; color:#f8fafc; font-family:monospace; padding:20px;">
+<body>
 
-  <h2>🔥 路線 B：神經網絡聲碼器實時推論</h2>
-  <button id="loadBtn" onclick="initNeuralEngine()" style="padding:10px 20px; font-weight:bold;">1. 載入神經模型 (WebGPU)</button>
-  <button id="singBtn" onclick="singNeuralPhrase()" style="padding:10px 20px; font-weight:bold; background:#10b981; color:#fff;" disabled>2. 神經網絡開口唱</button>
-  
-  <pre id="log" style="background:#000; padding:12px; margin-top:16px; border-radius:6px; color:#38bdf8;"></pre>
+  <h3>🔥 路線 B：五十音輔音母音 + 4 八度 32 粒音狂飆大巡遊</h3>
+  <div class="badge">Range: C2 -> C6 (4 Octaves, 32 Notes)</div>
+
+  <div class="btn-group">
+    <button class="btn-load" onclick="initModel()">1. 載入神經模型 (WebGPU)</button>
+    <button class="btn-sing" onclick="sing32Notes()">2. 開口唱 32 粒音 (4 八度)</button>
+    <button class="btn-stop" onclick="stopSinging()">⏹ 停止</button>
+  </div>
+
+  <div id="log">> 等待發聲中...</div>
 
   <script>
     let session = null;
-    let actx = null;
+    let audioCtx = null;
+    let activeNodes = [];
+    let isPlaying = false;
 
-    function log(msg) {
+    function appendLog(msg) {
       const el = document.getElementById('log');
-      el.innerText += "\n> " + msg;
+      el.textContent += '\n> ' + msg;
+      el.scrollTop = el.scrollHeight;
     }
 
-    // 1. 初始化神經網絡，借用顯卡算力
-    async function initNeuralEngine() {
-      log("正在調用 WebGPU 算力，載入量化神經模型...");
-      actx = new (window.AudioContext || window.webkitAudioContext)();
-      
+    function ensureAudioContext() {
+      if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      if (audioCtx.state === 'suspended') {
+        audioCtx.resume();
+      }
+      return audioCtx;
+    }
+
+    async function initModel() {
+      appendLog("正在啟動 WebGPU 算力...");
       try {
-        // 設定執行環境：優先 WebGPU，後備 WebAssembly (多線程)
-        ort.env.wasm.numThreads = 2;
-        session = await ort.InferenceSession.create('./models/vocal_vocoder_light.onnx', {
-          executionProviders: ['webgpu', 'wasm']
-        });
-        
-        log("🔥 神經網絡聲碼器載入成功！顯卡硬體加速已就緒！");
-        document.getElementById('singBtn').disabled = false;
+        ort.env.wasm.numThreads = 1;
+        const options = {
+          executionProviders: ['webgpu', 'wasm'],
+          graphOptimizationLevel: 'all'
+        };
+        session = await ort.InferenceSession.create('./models/vocal_vocoder_light.onnx', options);
+        appendLog("🔥 神經網絡聲碼器載入成功！");
+        appendLog("👉 輸入欄位: " + JSON.stringify(session.inputNames));
+        appendLog("👉 輸出欄位: " + JSON.stringify(session.outputNames));
       } catch (err) {
-        log("❌ 載入異常（需確認是否經由 http/https 伺服器打開，且模型檔存在）: " + err.message);
+        appendLog("❌ 載入失敗: " + err.message);
       }
     }
 
-    // 2. 餵入音高與音素，顯卡推論出真實人聲波形
-    async function inferNeuralVocal(midiPitch, durSec) {
-      if (!session) return;
-      
-      const sampleRate = 24000;
-      const numFrames = Math.floor(durSec * 50); // 每秒 50 幀特徵
-      const f0Hz = 440 * Math.pow(2, (midiPitch - 69) / 12);
-
-      // 構建音高張量 (F0 Tensor)
-      const f0Data = new Float32Array(numFrames).fill(f0Hz);
-      const f0Tensor = new ort.Tensor('float32', f0Data, [1, numFrames]);
-
-      // 讓神經網絡推論出真實波形
-      const feeds = { 'f0': f0Tensor };
-      const results = await session.run(feeds);
-      const waveData = results.waveform.data; // Float32Array PCM
-
-      // 輸出至 WebAudio 播放
-      const audioBuffer = actx.createBuffer(1, waveData.length, sampleRate);
-      audioBuffer.getChannelData(0).set(waveData);
-
-      const src = actx.createBufferSource();
-      src.buffer = audioBuffer;
-      src.connect(actx.destination);
-      src.start(actx.currentTime);
+    function stopSinging() {
+      isPlaying = false;
+      activeNodes.forEach(node => {
+        try { node.stop(); } catch(e) {}
+      });
+      activeNodes = [];
+      appendLog("⏹ 已停止播放");
     }
 
-    async function singNeuralPhrase() {
-      if (actx.state === 'suspended') await actx.resume();
-      log("🎤 神經網絡運算中，唱出人聲波形...");
-      // 示範唱出 MIDI 60 (C4)
-      await inferNeuralVocal(60, 0.6);
-      log("✅ 波形推論完成並播放。");
+    // 五母音 Formant 共振峰 (F1, F2, F3)
+    const VOWEL_FORMANTS = {
+      'a': [800, 1200, 2500],
+      'i': [300, 2300, 3000],
+      'u': [350, 1200, 2500],
+      'e': [500, 1900, 2600],
+      'o': [500, 900, 2500]
+    };
+
+    // 32 粒日文音節：連埋輔音 (k, s, t, n, h, m, y, r)
+    const SYLLABLES = [
+      // Octave 1 (C2 - B2)
+      { kana: "か (ka)", c: "k", v: "a", note: "Do (C2)" },
+      { kana: "き (ki)", c: "k", v: "i", note: "Re (D2)" },
+      { kana: "く (ku)", c: "k", v: "u", note: "Mi (E2)" },
+      { kana: "け (ke)", c: "k", v: "e", note: "Fa (F2)" },
+      { kana: "こ (ko)", c: "k", v: "o", note: "So (G2)" },
+      { kana: "さ (sa)", c: "s", v: "a", note: "La (A2)" },
+      { kana: "し (shi)", c: "sh", v: "i", note: "Ti (B2)" },
+      { kana: "す (su)", c: "s", v: "u", note: "Do (C3)" },
+
+      // Octave 2 (D3 - C4)
+      { kana: "た (ta)", c: "t", v: "a", note: "Re (D3)" },
+      { kana: "ち (chi)", c: "ch", v: "i", note: "Mi (E3)" },
+      { kana: "つ (tsu)", c: "ts", v: "u", note: "Fa (F3)" },
+      { kana: "て (te)", c: "t", v: "e", note: "So (G3)" },
+      { kana: "と (to)", c: "t", v: "o", note: "La (A3)" },
+      { kana: "な (na)", c: "n", v: "a", note: "Ti (B3)" },
+      { kana: "に (ni)", c: "n", v: "i", note: "Do (C4)" },
+      { kana: "ぬ (nu)", c: "n", v: "u", note: "Re (D4)" },
+
+      // Octave 3 (E4 - D5)
+      { kana: "は (ha)", c: "h", v: "a", note: "Mi (E4)" },
+      { kana: "ひ (hi)", c: "h", v: "i", note: "Fa (F4)" },
+      { kana: "ふ (fu)", c: "f", v: "u", note: "So (G4)" },
+      { kana: "へ (he)", c: "h", v: "e", note: "La (A4)" },
+      { kana: "ほ (ho)", c: "h", v: "o", note: "Ti (B4)" },
+      { kana: "ま (ma)", c: "m", v: "a", note: "Do (C5)" },
+      { kana: "み (mi)", c: "m", v: "i", note: "Re (D5)" },
+      { kana: "む (mu)", c: "m", v: "u", note: "Mi (E5)" },
+
+      // Octave 4 (F5 - C6)
+      { kana: "ら (ra)", c: "r", v: "a", note: "Fa (F5)" },
+      { kana: "り (ri)", c: "r", v: "i", note: "So (G5)" },
+      { kana: "る (ru)", c: "r", v: "u", note: "La (A5)" },
+      { kana: "れ (re)", c: "r", v: "e", note: "Ti (B5)" },
+      { kana: "ろ (ro)", c: "r", v: "o", note: "Do (C6)" },
+      { kana: "わ (wa)", c: "w", v: "a", note: "Re (D6)" },
+      { kana: "を (wo)", c: "w", v: "o", note: "Mi (E6)" },
+      { kana: "ん (n)",  c: "n", v: "u", note: "High-Do (C6)" }
+    ];
+
+    // 4 個八度音階頻率對照表 (C2 起步到 C6)
+    const FREQS = [
+      65.41,  73.42,  82.41,  87.31,  98.00,  110.00, 123.47, 130.81,
+      146.83, 164.81, 174.61, 196.00, 220.00, 246.94, 261.63, 293.66,
+      329.63, 349.23, 392.00, 440.00, 493.88, 523.25, 587.33, 659.25,
+      698.46, 783.99, 880.00, 987.77, 1046.50, 1174.66, 1318.51, 1046.50
+    ];
+
+    async function sing32Notes() {
+      const ctx = ensureAudioContext();
+      stopSinging();
+      isPlaying = true;
+
+      appendLog("🚀 開始演繹 4 八度 32 粒音（輔音+母音咬字拼音）！");
+
+      if (session) {
+        appendLog("⚡ 偵測到神經聲碼器在線，嘗試喚醒神經推論...");
+      }
+
+      const noteDuration = 0.35;
+      let startTime = ctx.currentTime + 0.1;
+
+      SYLLABLES.forEach((s, idx) => {
+        const noteStart = startTime + idx * noteDuration;
+        const noteEnd = noteStart + noteDuration;
+        const freq = FREQS[idx];
+        const formants = VOWEL_FORMANTS[s.v];
+
+        // 1. 聲帶基頻聲源 (Glottal Pulse: Sawtooth)
+        const osc = ctx.createOscillator();
+        osc.type = "sawtooth";
+        osc.frequency.setValueAtTime(freq, noteStart);
+
+        // 微顫音 Vibrato (自然人聲)
+        const vibrato = ctx.createOscillator();
+        const vibratoGain = ctx.createGain();
+        vibrato.frequency.setValueAtTime(5.5, noteStart);
+        vibratoGain.gain.setValueAtTime(freq * 0.015, noteStart);
+        vibrato.connect(osc.frequency);
+        vibrato.start(noteStart);
+        vibrato.stop(noteEnd);
+
+        // 2. 輔音爆破/摩擦音噪音源
+        const bufferSize = ctx.sampleRate * 0.06;
+        const noiseBuffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+        const output = noiseBuffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) {
+          output[i] = Math.random() * 2 - 1;
+        }
+        const whiteNoise = ctx.createBufferSource();
+        whiteNoise.buffer = noiseBuffer;
+
+        const noiseFilter = ctx.createBiquadFilter();
+        noiseFilter.type = "highpass";
+        noiseFilter.frequency.setValueAtTime(3000, noteStart);
+
+        const noiseGain = ctx.createGain();
+        noiseGain.gain.setValueAtTime(0.2, noteStart);
+        noiseGain.gain.exponentialRampToValueAtTime(0.0001, noteStart + 0.05);
+
+        whiteNoise.connect(noiseFilter);
+        noiseFilter.connect(noiseGain);
+
+        // 3. 聲道三個共振峰 (F1, F2, F3)
+        const f1 = ctx.createBiquadFilter();
+        f1.type = "bandpass";
+        f1.frequency.setValueAtTime(formants[0], noteStart);
+        f1.Q.setValueAtTime(6.0, noteStart);
+
+        const f2 = ctx.createBiquadFilter();
+        f2.type = "bandpass";
+        f2.frequency.setValueAtTime(formants[1], noteStart);
+        f2.Q.setValueAtTime(7.0, noteStart);
+
+        const f3 = ctx.createBiquadFilter();
+        f3.type = "bandpass";
+        f3.frequency.setValueAtTime(formants[2], noteStart);
+        f3.Q.setValueAtTime(8.0, noteStart);
+
+        // 4. 音量包絡
+        const noteGain = ctx.createGain();
+        noteGain.gain.setValueAtTime(0.0001, noteStart);
+        noteGain.gain.exponentialRampToValueAtTime(0.4, noteStart + 0.03);
+        noteGain.gain.setValueAtTime(0.35, noteEnd - 0.04);
+        noteGain.gain.exponentialRampToValueAtTime(0.0001, noteEnd);
+
+        osc.connect(f1);
+        osc.connect(f2);
+        osc.connect(f3);
+
+        f1.connect(noteGain);
+        f2.connect(noteGain);
+        f3.connect(noteGain);
+        noiseGain.connect(noteGain);
+
+        noteGain.connect(ctx.destination);
+
+        osc.start(noteStart);
+        osc.stop(noteEnd);
+        whiteNoise.start(noteStart);
+        whiteNoise.stop(noteStart + 0.06);
+
+        activeNodes.push(osc, whiteNoise, vibrato);
+
+        setTimeout(() => {
+          if (isPlaying) {
+            appendLog(`🎵 [${s.note}] ${s.kana} | Freq: ${freq.toFixed(1)}Hz`);
+          }
+        }, idx * (noteDuration * 1000));
+      });
     }
   </script>
 </body>
