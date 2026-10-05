@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+  <meta charset="UTF-8">
+  <title>VOGT - 路線 B 屠龍神經歌聲引擎</title>
+  <!-- 引入微軟官方 WebGPU 神經網絡引擎 -->
+  <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.webgpu.min.js"></script>
+</head>
+<body style="background:#0f172a; color:#f8fafc; font-family:monospace; padding:20px;">
+
+  <h2>🔥 路線 B：神經網絡聲碼器實時推論</h2>
+  <button id="loadBtn" onclick="initNeuralEngine()" style="padding:10px 20px; font-weight:bold;">1. 載入神經模型 (WebGPU)</button>
+  <button id="singBtn" onclick="singNeuralPhrase()" style="padding:10px 20px; font-weight:bold; background:#10b981; color:#fff;" disabled>2. 神經網絡開口唱</button>
+  
+  <pre id="log" style="background:#000; padding:12px; margin-top:16px; border-radius:6px; color:#38bdf8;"></pre>
+
+  <script>
+    let session = null;
+    let actx = null;
+
+    function log(msg) {
+      const el = document.getElementById('log');
+      el.innerText += "\n> " + msg;
+    }
+
+    // 1. 初始化神經網絡，借用顯卡算力
+    async function initNeuralEngine() {
+      log("正在調用 WebGPU 算力，載入量化神經模型...");
+      actx = new (window.AudioContext || window.webkitAudioContext)();
+      
+      try {
+        // 設定執行環境：優先 WebGPU，後備 WebAssembly (多線程)
+        ort.env.wasm.numThreads = 2;
+        session = await ort.InferenceSession.create('./models/vocal_vocoder_light.onnx', {
+          executionProviders: ['webgpu', 'wasm']
+        });
+        
+        log("🔥 神經網絡聲碼器載入成功！顯卡硬體加速已就緒！");
+        document.getElementById('singBtn').disabled = false;
+      } catch (err) {
+        log("❌ 載入異常（需確認是否經由 http/https 伺服器打開，且模型檔存在）: " + err.message);
+      }
+    }
+
+    // 2. 餵入音高與音素，顯卡推論出真實人聲波形
+    async function inferNeuralVocal(midiPitch, durSec) {
+      if (!session) return;
+      
+      const sampleRate = 24000;
+      const numFrames = Math.floor(durSec * 50); // 每秒 50 幀特徵
+      const f0Hz = 440 * Math.pow(2, (midiPitch - 69) / 12);
+
+      // 構建音高張量 (F0 Tensor)
+      const f0Data = new Float32Array(numFrames).fill(f0Hz);
+      const f0Tensor = new ort.Tensor('float32', f0Data, [1, numFrames]);
+
+      // 讓神經網絡推論出真實波形
+      const feeds = { 'f0': f0Tensor };
+      const results = await session.run(feeds);
+      const waveData = results.waveform.data; // Float32Array PCM
+
+      // 輸出至 WebAudio 播放
+      const audioBuffer = actx.createBuffer(1, waveData.length, sampleRate);
+      audioBuffer.getChannelData(0).set(waveData);
+
+      const src = actx.createBufferSource();
+      src.buffer = audioBuffer;
+      src.connect(actx.destination);
+      src.start(actx.currentTime);
+    }
+
+    async function singNeuralPhrase() {
+      if (actx.state === 'suspended') await actx.resume();
+      log("🎤 神經網絡運算中，唱出人聲波形...");
+      // 示範唱出 MIDI 60 (C4)
+      await inferNeuralVocal(60, 0.6);
+      log("✅ 波形推論完成並播放。");
+    }
+  </script>
+</body>
+</html>
