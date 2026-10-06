@@ -1,4 +1,4 @@
-name: 雲端全自動音源大收割
+name: 雲端全自動圭太男聲音源大收割
 
 on:
   workflow_dispatch:
@@ -19,18 +19,19 @@ jobs:
           sudo apt-get install -y ffmpeg
           pip install requests
 
-      - name: 執行全宇宙大收割
-        run: python harvest_full.py
+      - name: 執行圭太男聲 324 粒大收割
+        run: python harvest_keita.py
 
       - name: 打包成 ZIP 下載包
         uses: actions/upload-artifact@v4
         with:
-          name: arcatdia-324-vocals
-          path: vocal_samples/
+          name: keita-324-vocals
+          path: keita_vocals/
 
       - name: 自動 Commit 回倉庫
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add vocal_samples/
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto: 雲端收割 324 粒乾淨日文音源庫" && git push)
+          git add keita_vocals/
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto: 雲端收割 324 粒圭太 (Keita) 完整起音男聲音源庫" && git push)
+          
