@@ -2,281 +2,708 @@
 <html lang="zh-HK">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>DSP Vocal Engine - 4 Octaves 32 Notes</title>
-  <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.all.min.js"></script>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>VOGT - 雙核心旋律工作站 (WAV 歌聲版)</title>
+  
+  <!-- 雙核心引擎：alphaTab 官方播放器 + WebAudioFont -->
+  <script src="https://cdn.jsdelivr.net/npm/@coderline/alphatab@1.3.0/dist/alphaTab.js"></script>
+  <script src="https://surikov.github.io/webaudiofont/npm/dist/WebAudioFontPlayer.js"></script>
+  
   <style>
+    :root {
+      --bg: #0f141c;
+      --card-bg: rgba(22, 30, 44, 0.85);
+      --border: rgba(255, 255, 255, 0.12);
+      --accent: #ffd600;
+      --green: #00e676;
+      --cyan: #00bcd4;
+      --red: #ff5252;
+      --text: #e0e6ed;
+    }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
     body {
-      background-color: #0b0f19;
-      color: #f3f4f6;
+      margin: 0; padding: 10px;
+      background: var(--bg); color: var(--text);
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      padding: 16px;
-      margin: 0;
+      overflow-x: hidden;
     }
-    h3 {
-      font-size: 1.1rem;
-      margin-bottom: 12px;
-      color: #ff9900;
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px; margin-bottom: 8px;
     }
-    .btn-group {
-      display: flex;
-      gap: 10px;
-      margin-bottom: 16px;
-      flex-wrap: wrap;
+    .btn {
+      background: rgba(255,255,255,0.08); border: 1px solid var(--border);
+      color: #fff; padding: 6px 12px; border-radius: 6px; cursor: pointer;
+      font-size: 11px; font-weight: bold; transition: all 0.2s;
     }
-    button {
-      padding: 12px 16px;
-      font-size: 0.95rem;
-      font-weight: 600;
-      border: none;
-      border-radius: 6px;
-      cursor: pointer;
+    .btn:hover { background: rgba(255,255,255,0.18); }
+    .btn.active { background: var(--green); color: #000; border-color: var(--green); }
+    .btn-accent { background: var(--accent); color: #000; border: none; }
+    .btn-danger { background: var(--red); color: #fff; border: none; }
+    
+    .item-row {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 6px 8px; background: rgba(0,0,0,0.3); border-radius: 4px;
+      margin-bottom: 4px; font-size: 11px;
     }
-    .btn-load {
-      background-color: #ffffff;
-      color: #111827;
+    .scroll-box { max-height: 140px; overflow-y: auto; }
+    
+    .keyboard-container { display: flex; position: relative; height: 75px; user-select: none; margin-top: 4px; }
+    .white-key {
+      flex: 1; background: #fff; border: 1px solid #aaa; border-radius: 0 0 3px 3px;
+      position: relative; z-index: 1; cursor: pointer;
     }
-    .btn-sing {
-      background-color: #10b981;
-      color: #ffffff;
-    }
-    .btn-stop {
-      background-color: #ef4444;
-      color: #ffffff;
-    }
-    #log {
-      background-color: #030712;
-      border: 1px solid #1f2937;
-      border-radius: 6px;
-      padding: 12px;
-      font-family: monospace;
-      font-size: 0.82rem;
-      height: 260px;
-      overflow-y: auto;
-      white-space: pre-wrap;
-      word-break: break-all;
-      color: #38bdf8;
-    }
-    .badge {
-      display: inline-block;
-      padding: 2px 6px;
-      border-radius: 4px;
-      font-size: 0.75rem;
-      background: #1e293b;
-      color: #94a3b8;
-      margin-bottom: 8px;
+    .black-key {
+      position: absolute; width: 6.5%; height: 55%; background: #111;
+      border-radius: 0 0 2px 2px; z-index: 2; cursor: pointer;
     }
   </style>
 </head>
+
+
 <body>
 
-  <h3>🔥 路線 B：五十音輔音母音 + 4 八度 32 粒音狂飆大巡遊</h3>
-  <div class="badge">Range: C2 -> C6 (4 Octaves, 32 Notes)</div>
+  <!-- 頂部核心：旋律簡譜編輯器 -->
+  <div class="card" style="background: rgba(18, 25, 38, 0.95); border: 1px solid #00bcd4;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+      <span style="font-weight:bold; font-size:12px; color:var(--cyan);">📝 VOGT 旋律簡譜編輯器 (WAV 歌聲直讀版)</span>
+      <span id="barBudgetInfo" style="font-size:10px; color:#aaa;">音符數: 0</span>
+    </div>
 
-  <div class="btn-group">
-    <button class="btn-load" onclick="initModel()">1. 載入神經模型 (WebGPU)</button>
-    <button class="btn-sing" onclick="sing32Notes()">2. 開口唱 32 粒音 (4 八度)</button>
-    <button class="btn-stop" onclick="stopSinging()">⏹ 停止</button>
+    <!-- 時值快捷按鈕及功能按鈕 -->
+    <div style="display:flex; gap:4px; flex-wrap:wrap; margin-bottom:6px;">
+      <button class="btn active" id="dur-480" onclick="setSelectedDuration(480)">♩ 1拍 (480)</button>
+      <button class="btn" id="dur-240" onclick="setSelectedDuration(240)">♪ 半拍 (240)</button>
+      <button class="btn" id="dur-120" onclick="setSelectedDuration(120)">♬ 1/4拍 (120)</button>
+      <button class="btn" id="dur-960" onclick="setSelectedDuration(960)">♩- 2拍 (960)</button>
+      <button class="btn" id="dur-1920" onclick="setSelectedDuration(1920)">全音 (1920)</button>
+      <button class="btn btn-danger" onclick="clearScore()">清空</button>
+      <button class="btn btn-accent" onclick="playScoreMelody()">▶ 播唱主音/伴奏</button>
+      <button class="btn" style="background:#673ab7; border-color:#673ab7;" onclick="exportMusicXML()">💾 匯出 MusicXML</button>
+    </div>
+
+    <!-- 智能歌詞打字機 -->
+    <div style="display:flex; gap:6px; align-items:center; margin-bottom:6px;">
+      <span style="font-size:10px; color:var(--green); font-weight:bold; white-space:nowrap;">⌨ 歌詞打字機:</span>
+      <input type="text" id="batchLyricsInput" style="flex:1; background:rgba(0,0,0,0.5); border:1px solid #00e676; color:#fff; padding:4px 8px; border-radius:4px; font-size:11px;"
+             placeholder="貼上歌詞：日文假名直接整段貼（あなた...）或用空格分開羅馬拼音（a na ta）"
+             oninput="applyBatchLyrics(this.value)">
+    </div>
+
+    <!-- 樂譜 Canvas 畫布 -->
+    <div style="overflow-x: auto; background: #000; border-radius: 4px; border: 1px solid rgba(255,255,255,0.1);">
+      <canvas id="scoreCanvas" width="1200" height="180" style="display:block;"></canvas>
+    </div>
   </div>
 
-  <div id="log">> 等待發聲中...</div>
+  <!-- GP 伴奏分軌機架 -->
+  <div class="card" id="gp5TrackCard" style="border: 1px solid rgba(255,214,0,0.4);">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+      <div style="display:flex; align-items:center; gap:8px;">
+        <span style="font-weight:bold; font-size:11px; color:#ffd600;">🎸 GP 原曲真實伴奏分軌 (Backing Tracks)</span>
+        <input type="file" id="gpFileInput" accept=".gp,.gp5,.gpx,.gp3,.gp4" style="display:none;" onchange="handleGP5Upload(event)">
+        <button class="btn" style="padding:2px 8px; font-size:10px;" onclick="document.getElementById('gpFileInput').click()">載入 .GP 檔案</button>
+      </div>
+      <button class="btn btn-accent" id="gp5PlayBtn" onclick="toggleGP5Playback()">▶ 播放原曲伴奏</button>
+    </div>
+    <div style="display:flex; justify-content:space-between; font-size:10px; color:#aaa; margin-bottom:4px;">
+      <span id="gp5FileName">檔案：未載入</span>
+      <span id="gp5BpmInfo" style="color:#ffd600;">BPM: --</span>
+    </div>
+    <div id="gp5TrackList" class="scroll-box">
+      <div style="font-size:10px; color:#666; text-align:center; padding:10px;">請載入 .gp 檔案自動拆軌...</div>
+    </div>
+  </div>
+
+
+  <!-- 系統即時除錯盒 (Debug Panel) -->
+  <div class="card" style="background: rgba(0,0,0,0.85); border: 1px solid #ffd600;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+      <span style="font-size:11px; color:#ffd600; font-weight:bold;">🛠 系統即時除錯監控盒 (Debug Log)</span>
+      <button class="btn" style="padding:2px 6px; font-size:9px;" onclick="document.getElementById('debugLogBox').innerText=''">清空日誌</button>
+    </div>
+    <pre id="debugLogBox" style="margin:0; font-size:10px; color:#00e676; max-height:100px; overflow-y:auto; font-family:monospace; white-space:pre-wrap; line-height:1.4;">[系統就緒] 等待載入 .gp 檔案...</pre>
+  </div>
+
+  <!-- 折疊工作台開關 -->
+  <button class="btn" id="proToggleBtn" style="width:100%; margin-bottom:8px; padding:8px; background:rgba(255,255,255,0.05); border:1px dashed rgba(255,255,255,0.2);"
+          onclick="toggleProWorkstation()">
+    🎹 展開/收納 雙排琴鍵與混音台 ▼
+  </button>
+
+  <div id="proWorkstationContainer" style="display:none;">
+    <div class="card">
+      <div style="font-size:10px; color:#aaa; margin-bottom:2px;">右手主音琴鍵 (High: C4 - B5)</div>
+      <div class="keyboard-container" id="kbHigh"></div>
+      <div style="font-size:10px; color:#aaa; margin: 4px 0 2px 0;">左手伴奏/低音琴鍵 (Low: C2 - B3)</div>
+      <div class="keyboard-container" id="kbLow"></div>
+    </div>
+  </div>
 
   <script>
-    let session = null;
-    let audioCtx = null;
-    let activeNodes = [];
-    let isPlaying = false;
+    let ctx = null;
+    let wafPlayer = null;
+    let activeGMZone = null;
 
-    function appendLog(msg) {
-      const el = document.getElementById('log');
-      el.textContent += '\n> ' + msg;
-      el.scrollTop = el.scrollHeight;
-    }
-
-    function ensureAudioContext() {
-      if (!audioCtx) {
-        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      }
-      if (audioCtx.state === 'suspended') {
-        audioCtx.resume();
-      }
-      return audioCtx;
-    }
-
-    async function initModel() {
-      appendLog("正在啟動 WebGPU 算力...");
-      try {
-        ort.env.wasm.numThreads = 1;
-        const options = {
-          executionProviders: ['webgpu', 'wasm'],
-          graphOptimizationLevel: 'all'
-        };
-
-        const modelUrl = 'https://huggingface.co/Heidizai17/dsp-vocal/resolve/main/vocal_vocoder_light.onnx';
-        appendLog("正在從 Hugging Face 下載 56.6MB ONNX 本體...");
-
-        session = await ort.InferenceSession.create(modelUrl, options);
-        appendLog("🔥 神經網絡聲碼器載入成功！");
-        appendLog("👉 輸入欄位: " + JSON.stringify(session.inputNames));
-        appendLog("👉 輸出欄位: " + JSON.stringify(session.outputNames));
-      } catch (err) {
-        appendLog("❌ 載入失敗: " + err.message);
-      }
-    }
-
-    function stopSinging() {
-      isPlaying = false;
-      activeNodes.forEach(node => {
-        try { node.stop(); } catch(e) {}
-      });
-      activeNodes = [];
-      appendLog("⏹ 已停止播放");
-    }
-
-    const VOWEL_FORMANTS = {
-      'a': [800, 1200, 2500],
-      'i': [300, 2300, 3000],
-      'u': [350, 1200, 2500],
-      'e': [500, 1900, 2600],
-      'o': [500, 900, 2500]
+    const channels = {
+      left: { panNode: null, gainNode: null, targetGain: 0.8 },
+      right: { panNode: null, gainNode: null, targetGain: 0.8 }
     };
 
-    const SYLLABLES = [
-      { kana: "か (ka)", c: "k", v: "a", note: "Do (C2)" },
-      { kana: "き (ki)", c: "k", v: "i", note: "Re (D2)" },
-      { kana: "く (ku)", c: "k", v: "u", note: "Mi (E2)" },
-      { kana: "け (ke)", c: "k", v: "e", note: "Fa (F2)" },
-      { kana: "こ (ko)", c: "k", v: "o", note: "So (G2)" },
-      { kana: "さ (sa)", c: "s", v: "a", note: "La (A2)" },
-      { kana: "し (shi)", c: "sh", v: "i", note: "Ti (B2)" },
-      { kana: "す (su)", c: "s", v: "u", note: "Do (C3)" },
-      { kana: "た (ta)", c: "t", v: "a", note: "Re (D3)" },
-      { kana: "ち (chi)", c: "ch", v: "i", note: "Mi (E3)" },
-      { kana: "つ (tsu)", c: "ts", v: "u", note: "Fa (F3)" },
-      { kana: "て (te)", c: "t", v: "e", note: "So (G3)" },
-      { kana: "と (to)", c: "t", v: "o", note: "La (A3)" },
-      { kana: "な (na)", c: "n", v: "a", note: "Ti (B3)" },
-      { kana: "に (ni)", c: "n", v: "i", note: "Do (C4)" },
-      { kana: "ぬ (nu)", c: "n", v: "u", note: "Re (D4)" },
-      { kana: "は (ha)", c: "h", v: "a", note: "Mi (E4)" },
-      { kana: "ひ (hi)", c: "h", v: "i", note: "Fa (F4)" },
-      { kana: "ふ (fu)", c: "f", v: "u", note: "So (G4)" },
-      { kana: "へ (he)", c: "h", v: "e", note: "La (A4)" },
-      { kana: "ほ (ho)", c: "h", v: "o", note: "Ti (B4)" },
-      { kana: "ま (ma)", c: "m", v: "a", note: "Do (C5)" },
-      { kana: "み (mi)", c: "m", v: "i", note: "Re (D5)" },
-      { kana: "む (mu)", c: "m", v: "u", note: "Mi (E5)" },
-      { kana: "ら (ra)", c: "r", v: "a", note: "Fa (F5)" },
-      { kana: "り (ri)", c: "r", v: "i", note: "So (G5)" },
-      { kana: "る (ru)", c: "r", v: "u", note: "La (A5)" },
-      { kana: "れ (re)", c: "r", v: "e", note: "Ti (B5)" },
-      { kana: "ろ (ro)", c: "r", v: "o", note: "Do (C6)" },
-      { kana: "わ (wa)", c: "w", v: "a", note: "Re (D6)" },
-      { kana: "を (wo)", c: "w", v: "o", note: "Mi (E6)" },
-      { kana: "ん (n)",  c: "n", v: "u", note: "High-Do (C6)" }
-    ];
-
-    const FREQS = [
-      65.41,  73.42,  82.41,  87.31,  98.00,  110.00, 123.47, 130.81,
-      146.83, 164.81, 174.61, 196.00, 220.00, 246.94, 261.63, 293.66,
-      329.63, 349.23, 392.00, 440.00, 493.88, 523.25, 587.33, 659.25,
-      698.46, 783.99, 880.00, 987.77, 1046.50, 1174.66, 1318.51, 1046.50
-    ];
-
-    async function sing32Notes() {
-      const ctx = ensureAudioContext();
-      stopSinging();
-      isPlaying = true;
-
-      appendLog("🚀 開始演繹 4 八度 32 粒音（輔音+母音咬字拼音）！");
-
-      const noteDuration = 0.35;
-      let startTime = ctx.currentTime + 0.1;
-
-      SYLLABLES.forEach((s, idx) => {
-        const noteStart = startTime + idx * noteDuration;
-        const noteEnd = noteStart + noteDuration;
-        const freq = FREQS[idx];
-        const formants = VOWEL_FORMANTS[s.v];
-
-        const osc = ctx.createOscillator();
-        osc.type = "sawtooth";
-        osc.frequency.setValueAtTime(freq, noteStart);
-
-        const vibrato = ctx.createOscillator();
-        const vibratoGain = ctx.createGain();
-        vibrato.frequency.setValueAtTime(5.5, noteStart);
-        vibratoGain.gain.setValueAtTime(freq * 0.015, noteStart);
-        vibrato.connect(osc.frequency);
-        vibrato.start(noteStart);
-        vibrato.stop(noteEnd);
-
-        const bufferSize = ctx.sampleRate * 0.06;
-        const noiseBuffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
-        const output = noiseBuffer.getChannelData(0);
-        for (let i = 0; i < bufferSize; i++) {
-          output[i] = Math.random() * 2 - 1;
-        }
-        const whiteNoise = ctx.createBufferSource();
-        whiteNoise.buffer = noiseBuffer;
-
-        const noiseFilter = ctx.createBiquadFilter();
-        noiseFilter.type = "highpass";
-        noiseFilter.frequency.setValueAtTime(3000, noteStart);
-
-        const noiseGain = ctx.createGain();
-        noiseGain.gain.setValueAtTime(0.2, noteStart);
-        noiseGain.gain.exponentialRampToValueAtTime(0.0001, noteStart + 0.05);
-
-        whiteNoise.connect(noiseFilter);
-        noiseFilter.connect(noiseGain);
-
-        const f1 = ctx.createBiquadFilter();
-        f1.type = "bandpass";
-        f1.frequency.setValueAtTime(formants[0], noteStart);
-        f1.Q.setValueAtTime(6.0, noteStart);
-
-        const f2 = ctx.createBiquadFilter();
-        f2.type = "bandpass";
-        f2.frequency.setValueAtTime(formants[1], noteStart);
-        f2.Q.setValueAtTime(7.0, noteStart);
-
-        const f3 = ctx.createBiquadFilter();
-        f3.type = "bandpass";
-        f3.frequency.setValueAtTime(formants[2], noteStart);
-        f3.Q.setValueAtTime(8.0, noteStart);
-
-        const noteGain = ctx.createGain();
-        noteGain.gain.setValueAtTime(0.0001, noteStart);
-        noteGain.gain.exponentialRampToValueAtTime(0.4, noteStart + 0.03);
-        noteGain.gain.setValueAtTime(0.35, noteEnd - 0.04);
-        noteGain.gain.exponentialRampToValueAtTime(0.0001, noteEnd);
-
-        osc.connect(f1);
-        osc.connect(f2);
-        osc.connect(f3);
-
-        f1.connect(noteGain);
-        f2.connect(noteGain);
-        f3.connect(noteGain);
-        noiseGain.connect(noteGain);
-
-        noteGain.connect(ctx.destination);
-
-        osc.start(noteStart);
-        osc.stop(noteEnd);
-        whiteNoise.start(noteStart);
-        whiteNoise.stop(noteStart + 0.06);
-
-        activeNodes.push(osc, whiteNoise, vibrato);
-
-        setTimeout(() => {
-          if (isPlaying) {
-            appendLog(`🎵 [${s.note}] ${s.kana} | Freq: ${freq.toFixed(1)}Hz`);
-          }
-        }, idx * (noteDuration * 1000));
-      });
+    function logDebug(msg) {
+      const box = document.getElementById('debugLogBox');
+      if (box) { box.innerText += "\n" + msg; box.scrollTop = box.scrollHeight; }
+      console.log("[VOGT Debug]", msg);
     }
+
+
+    function ensureAudio() {
+      if (!ctx) {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        ctx = new AudioCtx();
+        wafPlayer = new WebAudioFontPlayer();
+
+        // 左聲道 (伴奏)
+        channels.left.panNode = ctx.createStereoPanner ? ctx.createStereoPanner() : ctx.createPanner();
+        if (channels.left.panNode.pan) channels.left.panNode.pan.value = -0.4;
+        channels.left.gainNode = ctx.createGain();
+        channels.left.gainNode.gain.value = channels.left.targetGain;
+        channels.left.gainNode.connect(channels.left.panNode);
+        channels.left.panNode.connect(ctx.destination);
+
+        // 右聲道 (主音)
+        channels.right.panNode = ctx.createStereoPanner ? ctx.createStereoPanner() : ctx.createPanner();
+        if (channels.right.panNode.pan) channels.right.panNode.pan.value = 0.4;
+        channels.right.gainNode = ctx.createGain();
+        channels.right.gainNode.gain.value = channels.right.targetGain;
+        channels.right.gainNode.connect(channels.right.panNode);
+        channels.right.panNode.connect(ctx.destination);
+
+        initVocalBank();
+        logDebug("🔊 WebAudio 引擎就緒。");
+      }
+      if (ctx.state === 'suspended') ctx.resume();
+    }
+
+    function toggleProWorkstation() {
+      const el = document.getElementById('proWorkstationContainer');
+      const btn = document.getElementById('proToggleBtn');
+      const isHidden = (el.style.display === 'none');
+      el.style.display = isHidden ? 'block' : 'none';
+      btn.innerText = isHidden ? "🎹 收納 雙排琴鍵與混音台 ▲" : "🎹 展開 雙排琴鍵與混音台 ▼";
+    }
+
+    function directSoundOn(midi, velocity = 100) {
+      ensureAudio();
+      // 琴鍵支援日文人聲發聲
+      speakSyllable('a', midi, 0.4);
+    }
+    function directSoundOff(midi, instant = false) {}
+
+    function renderKeyboards() {
+      renderOctave('kbHigh', 60, 24);
+      renderOctave('kbLow', 36, 24);
+    }
+    function renderOctave(containerId, startMidi, count) {
+      const el = document.getElementById(containerId);
+      if (!el) return;
+      el.innerHTML = '';
+      const blackMap = [1, 3, 6, 8, 10];
+      for (let i = 0; i < count; i++) {
+        const midi = startMidi + i;
+        if (!blackMap.includes(midi % 12)) {
+          const wk = document.createElement('div');
+          wk.className = 'white-key';
+          wk.onmousedown = () => { directSoundOn(midi); addScoreNote(midi); };
+          wk.ontouchstart = (e) => { e.preventDefault(); directSoundOn(midi); addScoreNote(midi); };
+          el.appendChild(wk);
+        }
+      }
+      let whiteIndex = 0;
+      for (let i = 0; i < count; i++) {
+        const midi = startMidi + i;
+        if (blackMap.includes(midi % 12)) {
+          const bk = document.createElement('div');
+          bk.className = 'black-key';
+          bk.style.left = `${(whiteIndex * 7.14) - 3.5}%`;
+          bk.onmousedown = () => { directSoundOn(midi); addScoreNote(midi); };
+          bk.ontouchstart = (e) => { e.preventDefault(); directSoundOn(midi); addScoreNote(midi); };
+          el.appendChild(bk);
+        } else { whiteIndex++; }
+      }
+    }
+
+
+    // 匯出標準 MusicXML
+    window.exportMusicXML = function() {
+      if (scoreData.length === 0) { alert("目前樂譜沒有音符可匯出！"); return; }
+      const stepNames = ["C", "C", "D", "D", "E", "F", "F", "G", "G", "A", "A", "B"];
+      const alters = [0, 1, 0, 1, 0, 0, 1, 0, 1, 0, 1, 0];
+      let xml = `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 3.1 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">\n<score-partwise version="3.1">\n<part-list><score-part id="P1"><part-name>Vocal</part-name></score-part></part-list>\n<part id="P1">\n`;
+      let currentMeasure = 1, measureTicks = 0;
+      xml += `  <measure number="${currentMeasure}">\n    <attributes>\n      <divisions>480</divisions>\n      <time><beats>4</beats><beat-type>4</beat-type></time>\n    </attributes>\n`;
+      scoreData.forEach(item => {
+        if (measureTicks >= 1920) {
+          xml += `  </measure>\n  <measure number="${++currentMeasure}">\n`;
+          measureTicks = 0;
+        }
+        if (item.midi === 0) {
+          xml += `    <note><rest/><duration>${item.ticks}</duration></note>\n`;
+        } else {
+          const step = stepNames[item.midi % 12], alter = alters[item.midi % 12], oct = Math.floor(item.midi / 12) - 1;
+          xml += `    <note><pitch><step>${step}</step>${alter !== 0 ? `<alter>${alter}</alter>` : ''}<octave>${oct}</octave></pitch><duration>${item.ticks}</duration>${item.lyric ? `<lyric><text>${item.lyric}</text></lyric>` : ''}</note>\n`;
+        }
+        measureTicks += item.ticks;
+      });
+      xml += `  </measure>\n</part>\n</score-partwise>`;
+      const blob = new Blob([xml], { type: "application/vnd.recordare.musicxml+xml" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = "Vocal_Project.musicxml"; a.click();
+      URL.revokeObjectURL(url);
+      logDebug("💾 成功匯出標準 MusicXML 檔案！");
+    };
+
+    // ==================== 🎤 本地人聲發音核心 (直駁 324 粒 WAV) ====================
+    let lastSungIndex = -1;
+    const vocalSampleCache = {};
+
+    const ROMAJI_MAP = {
+      'あ': 'a', 'い': 'i', 'う': 'u', 'え': 'e', 'お': 'o',
+      'か': 'ka', 'き': 'ki', 'く': 'ku', 'け': 'ke', 'こ': 'ko',
+      'さ': 'sa', 'し': 'shi', 'す': 'su', 'せ': 'se', 'そ': 'so',
+      'た': 'ta', 'ち': 'chi', 'つ': 'tsu', 'て': 'te', 'と': 'to',
+      'な': 'na', 'に': 'ni', 'ぬ': 'nu', 'ね': 'ne', 'の': 'no',
+      'は': 'ha', 'ひ': 'hi', 'ふ': 'fu', 'へ': 'he', 'ほ': 'ho',
+      'ま': 'ma', 'み': 'mi', 'む': 'mu', 'め': 'me', 'も': 'mo',
+      'や': 'ya', 'ゆ': 'yu', 'よ': 'yo',
+      'ら': 'ra', 'り': 'ri', 'る': 'ru', 'れ': 're', 'ろ': 'ro',
+      'わ': 'wa', 'を': 'o', 'ん': 'n'
+    };
+
+    async function loadVocalSample(filename) {
+      if (vocalSampleCache[filename]) return vocalSampleCache[filename];
+      try {
+        const resp = await fetch(`vocal_samples/${filename}.wav`);
+        if (!resp.ok) throw new Error("File not found");
+        const buf = await resp.arrayBuffer();
+        const decoded = await ctx.decodeAudioData(buf);
+        vocalSampleCache[filename] = decoded;
+        return decoded;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    async function initVocalBank() {
+      await loadVocalSample('a_mid');
+      await loadVocalSample('a_high');
+      await loadVocalSample('a_low');
+      logDebug("🎤 日文核心音源預載就緒！");
+    }
+
+
+    async function speakSyllable(text, midi, durSec = 0.35) {
+      ensureAudio();
+      if (midi <= 0) return;
+
+      const raw = (text || "").toLowerCase().trim();
+      const phoneme = ROMAJI_MAP[raw] || raw || 'a';
+      const now = ctx.currentTime;
+
+      // 智能分派三大基因錨點 (D4 = 62 為中音基準)
+      let tier = "mid";
+      let baseMidi = 62; // D4 基準
+
+      if (midi >= 67) {
+        tier = "high";
+        baseMidi = 67;   // G4 基準
+      } else if (midi <= 57) {
+        tier = "low";
+        baseMidi = 57;   // A3 基準
+      }
+
+      let targetFile = `${phoneme}_${tier}`;
+      let audioBuffer = await loadVocalSample(targetFile);
+
+      if (!audioBuffer) {
+        audioBuffer = await loadVocalSample(`a_${tier}`);
+      }
+
+      if (audioBuffer) {
+        const source = ctx.createBufferSource();
+        source.buffer = audioBuffer;
+
+        // 十二平均律 Pitch Shift: 微調半音差
+        const semitoneShift = midi - baseMidi;
+        source.playbackRate.value = Math.pow(2, semitoneShift / 12);
+
+        const gainNode = ctx.createGain();
+        gainNode.gain.setValueAtTime(0.9, now);
+        const fadeOutTime = Math.min(durSec, 0.75);
+        gainNode.gain.setValueAtTime(0.9, now + fadeOutTime - 0.03);
+        gainNode.gain.linearRampToValueAtTime(0.001, now + fadeOutTime);
+
+        source.connect(gainNode);
+        gainNode.connect(channels.right.gainNode);
+
+        source.start(now);
+        source.stop(now + fadeOutTime);
+        return;
+      }
+
+      playFallbackFormantVoice(midi, durSec);
+    }
+
+    function playFallbackFormantVoice(midi, durSec) {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      const filter = ctx.createBiquadFilter();
+
+      const freq = 440 * Math.pow(2, (midi - 69) / 12);
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(freq, ctx.currentTime);
+
+      filter.type = 'bandpass';
+      filter.frequency.setValueAtTime(1000, ctx.currentTime);
+      filter.Q.value = 4.5;
+
+      const now = ctx.currentTime;
+      gain.gain.setValueAtTime(0.001, now);
+      gain.gain.linearRampToValueAtTime(0.3, now + 0.03);
+      gain.gain.setValueAtTime(0.3, now + durSec - 0.05);
+      gain.gain.linearRampToValueAtTime(0.001, now + durSec);
+
+      osc.connect(filter);
+      filter.connect(gain);
+      gain.connect(channels.right.gainNode);
+
+      osc.start(now);
+      osc.stop(now + durSec);
+    }
+
+
+    // ==================== 樂譜與伴奏連動 ====================
+    let currentSelectedTicks = 480;
+    let scoreData = [];
+    let currentSongBpm = 175;
+    let isBackingPlaying = false;
+    let currentScore = null;
+    let api = null;
+
+    window.addEventListener('DOMContentLoaded', () => {
+      ensureAudio();
+      try {
+        const container = document.createElement('div');
+        container.style.display = 'none';
+        document.body.appendChild(container);
+
+        api = new alphaTab.AlphaTabApi(container, {
+          player: {
+            enablePlayer: true,
+            soundFont: 'https://cdn.jsdelivr.net/npm/@coderline/alphatab@1.3.0/dist/soundfont/sonivox.sf2'
+          }
+        });
+
+        api.soundFontLoaded.on(() => {
+          logDebug("🚀 官方 SoundFont 伴奏引擎載入就緒！");
+        });
+
+        api.playerStateChanged.on((args) => {
+          isBackingPlaying = (args.state === 1);
+          const btn = document.getElementById('gp5PlayBtn');
+          if (btn) {
+            btn.innerText = isBackingPlaying ? "⏹ 停止伴奏" : "▶ 播放原曲伴奏";
+            btn.style.background = isBackingPlaying ? "#ff5252" : "#00e676";
+            btn.style.color = isBackingPlaying ? "#fff" : "#000";
+          }
+        });
+
+        api.playerPositionChanged.on((args) => {
+          if (!isBackingPlaying || scoreData.length === 0) return;
+          const currentSec = (args.currentTime || 0) / 1000;
+          triggerVocalSing(currentSec);
+        });
+      } catch(e) {
+        logDebug("⚠ 播放器初始化提示: " + e.message);
+      }
+    });
+
+    function triggerVocalSing(currentSec) {
+      const noteIdx = scoreData.findIndex(item => {
+        const start = item.timeSec || 0;
+        const end = start + (item.durSec || 0.3);
+        return currentSec >= start && currentSec < end;
+      });
+
+      if (noteIdx !== -1 && noteIdx !== lastSungIndex) {
+        lastSungIndex = noteIdx;
+        const noteItem = scoreData[noteIdx];
+        if (noteItem.midi > 0) {
+          speakSyllable(noteItem.lyric, noteItem.midi, noteItem.durSec || 0.35);
+        }
+      }
+    }
+
+    window.setSelectedDuration = function(ticks) {
+      currentSelectedTicks = ticks;
+      [480, 240, 120, 960, 1920].forEach(t => {
+        const btn = document.getElementById(`dur-${t}`); if (btn) btn.classList.toggle('active', t === ticks);
+      });
+    };
+
+    function getScoreSymbol(midi) {
+      if (!midi || midi === 0) return { num: '0', symbol: '𝄽', dot: 0 };
+      const scale = [0, 0, 1, 1, 2, 3, 3, 4, 4, 5, 5, 6];
+      return { num: (scale[midi % 12] + 1).toString(), dot: Math.floor(midi / 12) - 5 };
+    }
+    function getNoteGlyph(t) {
+      if (t >= 1920) return "𝅝"; if (t >= 960) return "𝅗𝅥"; if (t >= 480) return "♩"; if (t >= 240) return "♪"; return "♬";
+    }
+    function addScoreNote(midi, lyricText) {
+      scoreData.push({ midi: midi, ticks: currentSelectedTicks, lyric: lyricText || "" });
+      renderScoreSheet();
+    }
+    window.clearScore = function() {
+      scoreData = [];
+      lastSungIndex = -1;
+      renderScoreSheet();
+      logDebug("樂譜已清空。");
+    };
+
+    window.applyBatchLyrics = function(fullText) {
+      const trimmed = fullText.trim();
+      if (!trimmed) return;
+      let syllables = trimmed.includes(' ') ? trimmed.split(/\s+/) : Array.from(trimmed);
+      let sylIdx = 0;
+      scoreData.forEach(item => {
+        if (item.midi > 0) {
+          item.lyric = (sylIdx < syllables.length) ? syllables[sylIdx] : "";
+          sylIdx++;
+        }
+      });
+      renderScoreSheet();
+      logDebug(`打字機已對齊 ${Math.min(sylIdx, syllables.length)} 個音節歌詞！`);
+    };
+
+
+    function renderScoreSheet() {
+      const canvas = document.getElementById('scoreCanvas'); if (!canvas) return;
+      const ctx2d = canvas.getContext('2d');
+      const displayList = scoreData.slice(0, 150);
+      const targetW = Math.min(3200, Math.max(1200, displayList.length * 36 + 60));
+      canvas.width = targetW; canvas.height = 180;
+      const W = canvas.width, H = canvas.height;
+      ctx2d.clearRect(0, 0, W, H);
+
+      let currentX = 20, currentBarTicks = 0, barIndex = 1;
+      ctx2d.strokeStyle = "rgba(255, 255, 255, 0.4)"; ctx2d.lineWidth = 1.5;
+      ctx2d.beginPath(); ctx2d.moveTo(currentX, 15); ctx2d.lineTo(currentX, 165); ctx2d.stroke();
+
+      if (displayList.length === 0) {
+        ctx2d.fillStyle = "#888"; ctx2d.font = "13px sans-serif";
+        ctx2d.fillText("請載入 .gp 檔案或彈奏琴鍵輸入音符...", 30, 90);
+        return;
+      }
+
+      displayList.forEach(item => {
+        const sym = getScoreSymbol(item.midi), glyph = getNoteGlyph(item.ticks);
+        const noteStepWidth = Math.max(28, (item.ticks / 1920) * 160);
+        const noteX = currentX + (noteStepWidth / 2);
+
+        ctx2d.fillStyle = item.midi === 0 ? "#555" : "#ffd600";
+        ctx2d.font = "bold 13px sans-serif"; ctx2d.textAlign = "center";
+        ctx2d.fillText(glyph, noteX, 42);
+
+        ctx2d.fillStyle = item.midi === 0 ? "#777" : "#ffffff";
+        ctx2d.font = "bold 16px monospace";
+        ctx2d.fillText(sym.num, noteX, 80);
+
+        if (sym.dot > 0 && item.midi > 0) { ctx2d.beginPath(); ctx2d.arc(noteX, 64, 2, 0, Math.PI * 2); ctx2d.fill(); }
+        else if (sym.dot < 0 && item.midi > 0) { ctx2d.beginPath(); ctx2d.arc(noteX, 90, 2, 0, Math.PI * 2); ctx2d.fill(); }
+
+        if (item.ticks === 240) {
+          ctx2d.strokeStyle = "#00e676"; ctx2d.lineWidth = 2;
+          ctx2d.beginPath(); ctx2d.moveTo(noteX - 7, 92); ctx2d.lineTo(noteX + 7, 92); ctx2d.stroke();
+        } else if (item.ticks === 120) {
+          ctx2d.strokeStyle = "#00e676"; ctx2d.lineWidth = 1.5;
+          ctx2d.beginPath(); ctx2d.moveTo(noteX - 7, 92); ctx2d.lineTo(noteX + 7, 92); ctx2d.stroke();
+          ctx2d.beginPath(); ctx2d.moveTo(noteX - 7, 96); ctx2d.lineTo(noteX + 7, 96); ctx2d.stroke();
+        } else if (item.ticks >= 960) {
+          ctx2d.fillStyle = "#ffffff"; ctx2d.fillText("-", noteX + 15, 78);
+        }
+
+        ctx2d.fillStyle = "#00bcd4"; ctx2d.font = "bold 12px sans-serif";
+        ctx2d.fillText(item.lyric || "", noteX, 130);
+
+        currentX += noteStepWidth; currentBarTicks += item.ticks;
+        if (currentBarTicks >= 1920) {
+          ctx2d.strokeStyle = "rgba(255, 255, 255, 0.4)"; ctx2d.lineWidth = 1.5;
+          ctx2d.beginPath(); ctx2d.moveTo(currentX, 15); ctx2d.lineTo(currentX, 165); ctx2d.stroke();
+          currentBarTicks = currentBarTicks % 1920; barIndex++;
+        }
+      });
+
+      const info = document.getElementById('barBudgetInfo');
+      if (info) info.innerText = `顯示小節: ${barIndex} | 總音符: ${scoreData.length}`;
+    }
+
+    // 伴奏與軌道控制
+    window.toggleTrackMute = function(trackIdx, btn) {
+      if (!currentScore || !api) return;
+      const track = currentScore.tracks[trackIdx];
+      if (track) {
+        const isMuted = !track.isMute;
+        api.changeTrackMute([track], isMuted);
+        track.isMute = isMuted;
+        btn.innerText = isMuted ? "Unmute" : "Mute";
+        btn.style.background = isMuted ? "#ff5252" : "rgba(255,255,255,0.1)";
+        btn.style.color = isMuted ? "#fff" : "#aaa";
+        logDebug(`軌道 #${trackIdx+1} 靜音: ${isMuted}`);
+      }
+    };
+
+    window.handleGP5Upload = async function(event) {
+      ensureAudio();
+      const file = event.target.files[0];
+      if (!file) return;
+
+      logDebug(`📂 載入檔案: ${file.name} (${file.size} Bytes)`);
+      document.getElementById('gp5FileName').innerText = `檔案：${file.name}`;
+      document.getElementById('gp5TrackCard').style.display = 'block';
+
+      const arrayBuffer = await file.arrayBuffer();
+      const bytes = new Uint8Array(arrayBuffer);
+
+      try {
+        currentScore = alphaTab.importer.ScoreLoader.loadScoreFromBytes(bytes);
+        currentSongBpm = currentScore.tempo || 175;
+        document.getElementById('gp5BpmInfo').innerText = `BPM: ${currentSongBpm}`;
+
+        if (api) {
+          api.renderScore(currentScore);
+        }
+
+        logDebug(`✅ 成功解碼: ${currentScore.title || file.name} | BPM: ${currentSongBpm}`);
+        extractVocalScore(currentScore);
+      } catch (err) {
+        logDebug(`⚠️ 解碼異常: ${err.message}`);
+      }
+    };
+
+    function extractVocalScore(score) {
+      scoreData = [];
+      lastSungIndex = -1;
+      const trackListEl = document.getElementById('gp5TrackList');
+      trackListEl.innerHTML = '';
+
+      let vocalTrackIndex = 0;
+      score.tracks.forEach((t, idx) => {
+        const lower = (t.name || '').toLowerCase();
+        if (lower.includes('vocal') || lower.includes('melody') || lower.includes('voice') || lower.includes('歌')) {
+          vocalTrackIndex = idx;
+        }
+        const row = document.createElement('div');
+        row.className = 'item-row';
+        row.innerHTML = `
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span style="font-weight:bold; color:#fff;">${t.name || `軌道 ${idx+1}`}</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:6px;">
+            <span style="font-size:10px; color:#ffd600;">#${idx+1}</span>
+            <button class="btn" style="padding:2px 6px; font-size:9px;" onclick="selectAsVocalTrack(${idx})">設為主唱</button>
+            <button class="btn" id="mute-btn-${idx}" style="padding:2px 6px; font-size:9px;" onclick="toggleTrackMute(${idx}, this)">Mute</button>
+          </div>
+        `;
+        trackListEl.appendChild(row);
+      });
+
+      selectAsVocalTrack(vocalTrackIndex);
+    }
+
+    window.selectAsVocalTrack = function(idx) {
+      if (!currentScore || !currentScore.tracks[idx]) return;
+      const track = currentScore.tracks[idx];
+      
+      if (api) {
+        api.changeTrackMute([track], true);
+        track.isMute = true;
+        const muteBtn = document.getElementById(`mute-btn-${idx}`);
+        if (muteBtn) {
+          muteBtn.innerText = "Unmute";
+          muteBtn.style.background = "#ff5252";
+          muteBtn.style.color = "#fff";
+        }
+        logDebug(`🔇 已自動將伴奏器中的 [${track.name}] 靜音，避免與主唱撞聲！`);
+      }
+
+      logDebug(`🎯 切換主唱軌道為: ${track.name}`);
+      parseTrackToScore(track);
+    };
+
+    function parseTrackToScore(track) {
+      scoreData = [];
+      lastSungIndex = -1;
+      const ticksPerQuarter = 96;
+      const secPerTick = (60 / currentSongBpm) / ticksPerQuarter;
+      let currentTick = 0;
+
+      const staves = track.staves || track.staffs || [];
+      staves.forEach(staff => {
+        if (staff && staff.bars) {
+          staff.bars.forEach(bar => {
+            if (bar && bar.voices) {
+              bar.voices.forEach(voice => {
+                let barTick = 0;
+                if (voice && voice.beats) {
+                  voice.beats.forEach(beat => {
+                    let durationRatio = 1 / (beat.duration || 4);
+                    let beatTicks = Math.round(durationRatio * (ticksPerQuarter * 4));
+                    if (beat.dots === 1) beatTicks = Math.round(beatTicks * 1.5);
+
+                    const noteStartTick = currentTick + barTick;
+                    const timeSec = noteStartTick * secPerTick;
+                    const durSec = beatTicks * secPerTick;
+
+                    if (beat.notes && beat.notes.length > 0) {
+                      beat.notes.forEach(n => {
+                        let midi = n.realValue || (n.fret ? 60 + n.fret : 60);
+                        scoreData.push({ midi: midi, ticks: beatTicks * 5, lyric: "", timeSec: timeSec, durSec: durSec });
+                      });
+                    } else if (beat.isRest) {
+                      scoreData.push({ midi: 0, ticks: beatTicks * 5, lyric: "", timeSec: timeSec, durSec: durSec });
+                    }
+                    barTick += beatTicks;
+                  });
+                }
+              });
+            }
+            let num = bar?.masterBar?.timeSignatureNumerator || 4;
+            let den = bar?.masterBar?.timeSignatureDenominator || 4;
+            currentTick += (num / den) * (ticksPerQuarter * 4);
+          });
+        }
+      });
+
+      logDebug(`🎵 主唱音軌已載入: 共 ${scoreData.length} 拍`);
+      renderScoreSheet();
+    }
+
+    window.toggleGP5Playback = function() {
+      ensureAudio();
+      if (!api) return;
+      lastSungIndex = -1;
+      api.playPause();
+    };
+
+    window.playScoreMelody = function() {
+      toggleGP5Playback();
+    };
+
+    renderKeyboards();
+    renderScoreSheet();
   </script>
 </body>
 </html>
