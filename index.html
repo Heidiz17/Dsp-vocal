@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>VOGT - 雙核心旋律工作站 (WAV 歌聲版)</title>
+  <title>VOGT - 雙核心旋律工作站 (降八度自然歌聲版)</title>
   
   <!-- 雙核心引擎：alphaTab 官方播放器 + WebAudioFont -->
   <script src="https://cdn.jsdelivr.net/npm/@coderline/alphatab@1.3.0/dist/alphaTab.js"></script>
@@ -27,7 +27,9 @@
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       overflow-x: hidden;
     }
-    .card {
+
+
+        .card {
       background: var(--card-bg);
       border: 1px solid var(--border);
       border-radius: 8px;
@@ -61,8 +63,6 @@
     }
   </style>
 </head>
-
-
 <body>
 
   <!-- 頂部核心：旋律簡譜編輯器 -->
@@ -72,7 +72,7 @@
       <span id="barBudgetInfo" style="font-size:10px; color:#aaa;">音符數: 0</span>
     </div>
 
-    <!-- 時值快捷按鈕及功能按鈕 -->
+    <!-- 時值快捷按鈕及八度切換按鈕 -->
     <div style="display:flex; gap:4px; flex-wrap:wrap; margin-bottom:6px;">
       <button class="btn active" id="dur-480" onclick="setSelectedDuration(480)">♩ 1拍 (480)</button>
       <button class="btn" id="dur-240" onclick="setSelectedDuration(240)">♪ 半拍 (240)</button>
@@ -81,10 +81,12 @@
       <button class="btn" id="dur-1920" onclick="setSelectedDuration(1920)">全音 (1920)</button>
       <button class="btn btn-danger" onclick="clearScore()">清空</button>
       <button class="btn btn-accent" onclick="playScoreMelody()">▶ 播唱主音/伴奏</button>
+      <button class="btn" id="octaveShiftBtn" style="background:#0284c7; border:none;" onclick="toggleOctaveShift()">🔄 音高: 降1八度 (-12)</button>
       <button class="btn" style="background:#673ab7; border-color:#673ab7;" onclick="exportMusicXML()">💾 匯出 MusicXML</button>
     </div>
 
-    <!-- 智能歌詞打字機 -->
+
+        <!-- 智能歌詞打字機 -->
     <div style="display:flex; gap:6px; align-items:center; margin-bottom:6px;">
       <span style="font-size:10px; color:var(--green); font-weight:bold; white-space:nowrap;">⌨ 歌詞打字機:</span>
       <input type="text" id="batchLyricsInput" style="flex:1; background:rgba(0,0,0,0.5); border:1px solid #00e676; color:#fff; padding:4px 8px; border-radius:4px; font-size:11px;"
@@ -117,17 +119,16 @@
     </div>
   </div>
 
-
   <!-- 系統即時除錯盒 (Debug Panel) -->
   <div class="card" style="background: rgba(0,0,0,0.85); border: 1px solid #ffd600;">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
       <span style="font-size:11px; color:#ffd600; font-weight:bold;">🛠 系統即時除錯監控盒 (Debug Log)</span>
       <button class="btn" style="padding:2px 6px; font-size:9px;" onclick="document.getElementById('debugLogBox').innerText=''">清空日誌</button>
     </div>
-    <pre id="debugLogBox" style="margin:0; font-size:10px; color:#00e676; max-height:100px; overflow-y:auto; font-family:monospace; white-space:pre-wrap; line-height:1.4;">[系統就緒] 等待載入 .gp 檔案...</pre>
+    <pre id="debugLogBox" style="margin:0; font-size:10px; color:#00e676; max-height:100px; overflow-y:auto; font-family:monospace; white-space:pre-wrap; line-height:1.4;">[系統就緒] 預設已啟動「降 1 個八度 (-12)」自然人聲唱腔！</pre>
   </div>
 
-  <!-- 折疊工作台開關 -->
+  <!-- 折疊琴鍵面板 -->
   <button class="btn" id="proToggleBtn" style="width:100%; margin-bottom:8px; padding:8px; background:rgba(255,255,255,0.05); border:1px dashed rgba(255,255,255,0.2);"
           onclick="toggleProWorkstation()">
     🎹 展開/收納 雙排琴鍵與混音台 ▼
@@ -142,10 +143,12 @@
     </div>
   </div>
 
-  <script>
+
+    <script>
     let ctx = null;
     let wafPlayer = null;
     let activeGMZone = null;
+    let currentOctaveShift = -12; // 預設強制降 1 個八度 (-12)
 
     const channels = {
       left: { panNode: null, gainNode: null, targetGain: 0.8 },
@@ -158,6 +161,23 @@
       console.log("[VOGT Debug]", msg);
     }
 
+    function toggleOctaveShift() {
+      if (currentOctaveShift === -12) {
+        currentOctaveShift = -24;
+        document.getElementById('octaveShiftBtn').innerText = "🔄 音高: 降2八度 (-24)";
+      } else if (currentOctaveShift === -24) {
+        currentOctaveShift = 0;
+        document.getElementById('octaveShiftBtn').innerText = "🔄 音高: 原譜原高 (0)";
+      } else {
+        currentOctaveShift = -12;
+        document.getElementById('octaveShiftBtn').innerText = "🔄 音高: 降1八度 (-12)";
+      }
+      logDebug(`🎯 音高設定已變更為: ${currentOctaveShift} 半音`);
+      if (currentScore) {
+        const vTrack = currentScore.tracks.find(t => t.isMute) || currentScore.tracks[0];
+        parseTrackToScore(vTrack);
+      }
+    }
 
     function ensureAudio() {
       if (!ctx) {
@@ -197,12 +217,12 @@
 
     function directSoundOn(midi, velocity = 100) {
       ensureAudio();
-      // 琴鍵支援日文人聲發聲
-      speakSyllable('a', midi, 0.4);
+      speakSyllable('a', midi + currentOctaveShift, 0.4);
     }
     function directSoundOff(midi, instant = false) {}
 
-    function renderKeyboards() {
+
+          function renderKeyboards() {
       renderOctave('kbHigh', 60, 24);
       renderOctave('kbLow', 36, 24);
     }
@@ -235,7 +255,6 @@
       }
     }
 
-
     // 匯出標準 MusicXML
     window.exportMusicXML = function() {
       if (scoreData.length === 0) { alert("目前樂譜沒有音符可匯出！"); return; }
@@ -266,7 +285,7 @@
       logDebug("💾 成功匯出標準 MusicXML 檔案！");
     };
 
-    // ==================== 🎤 本地人聲發音核心 (直駁 324 粒 WAV) ====================
+    // ==================== 🎤 WAV 人聲核心 ====================
     let lastSungIndex = -1;
     const vocalSampleCache = {};
 
@@ -305,7 +324,7 @@
     }
 
 
-    async function speakSyllable(text, midi, durSec = 0.35) {
+          async function speakSyllable(text, midi, durSec = 0.35) {
       ensureAudio();
       if (midi <= 0) return;
 
@@ -313,16 +332,16 @@
       const phoneme = ROMAJI_MAP[raw] || raw || 'a';
       const now = ctx.currentTime;
 
-      // 智能分派三大基因錨點 (D4 = 62 為中音基準)
+      // 智能分派三大基因錨點 (D4 = 62 基準)
       let tier = "mid";
-      let baseMidi = 62; // D4 基準
+      let baseMidi = 62;
 
       if (midi >= 67) {
         tier = "high";
-        baseMidi = 67;   // G4 基準
+        baseMidi = 67;
       } else if (midi <= 57) {
         tier = "low";
-        baseMidi = 57;   // A3 基準
+        baseMidi = 57;
       }
 
       let targetFile = `${phoneme}_${tier}`;
@@ -336,17 +355,25 @@
         const source = ctx.createBufferSource();
         source.buffer = audioBuffer;
 
-        // 十二平均律 Pitch Shift: 微調半音差
         const semitoneShift = midi - baseMidi;
         source.playbackRate.value = Math.pow(2, semitoneShift / 12);
 
+        // 1. 低通平滑濾波 (3800Hz) - 吸走慢放捉碟毛刺雜音
+        const filter = ctx.createBiquadFilter();
+        filter.type = "lowpass";
+        filter.frequency.setValueAtTime(3800, now);
+        filter.Q.value = 1.0;
+
+        // 2. 柔和包絡淡入淡出
         const gainNode = ctx.createGain();
-        gainNode.gain.setValueAtTime(0.9, now);
+        gainNode.gain.setValueAtTime(0.001, now);
+        gainNode.gain.linearRampToValueAtTime(0.85, now + 0.04);
         const fadeOutTime = Math.min(durSec, 0.75);
-        gainNode.gain.setValueAtTime(0.9, now + fadeOutTime - 0.03);
+        gainNode.gain.setValueAtTime(0.85, now + fadeOutTime - 0.04);
         gainNode.gain.linearRampToValueAtTime(0.001, now + fadeOutTime);
 
-        source.connect(gainNode);
+        source.connect(filter);
+        filter.connect(gainNode);
         gainNode.connect(channels.right.gainNode);
 
         source.start(now);
@@ -385,7 +412,7 @@
     }
 
 
-    // ==================== 樂譜與伴奏連動 ====================
+          // ==================== 樂譜與伴奏連動 ====================
     let currentSelectedTicks = 480;
     let scoreData = [];
     let currentSongBpm = 175;
@@ -489,7 +516,7 @@
     };
 
 
-    function renderScoreSheet() {
+          function renderScoreSheet() {
       const canvas = document.getElementById('scoreCanvas'); if (!canvas) return;
       const ctx2d = canvas.getContext('2d');
       const displayList = scoreData.slice(0, 150);
@@ -589,7 +616,7 @@
         logDebug(`✅ 成功解碼: ${currentScore.title || file.name} | BPM: ${currentSongBpm}`);
         extractVocalScore(currentScore);
       } catch (err) {
-        logDebug(`⚠️ 解碼異常: ${err.message}`);
+        logDebug(`⚠ 解碼異常: ${err.message}`);
       }
     };
 
@@ -669,8 +696,10 @@
 
                     if (beat.notes && beat.notes.length > 0) {
                       beat.notes.forEach(n => {
-                        let midi = n.realValue || (n.fret ? 60 + n.fret : 60);
-                        scoreData.push({ midi: midi, ticks: beatTicks * 5, lyric: "", timeSec: timeSec, durSec: durSec });
+                        let baseMidi = n.realValue || (n.fret ? 60 + n.fret : 60);
+                        // 自動套用音高位移 (預設強制降 1 個八度: -12)
+                        let shiftedMidi = baseMidi + currentOctaveShift;
+                        scoreData.push({ midi: shiftedMidi, ticks: beatTicks * 5, lyric: "", timeSec: timeSec, durSec: durSec });
                       });
                     } else if (beat.isRest) {
                       scoreData.push({ midi: 0, ticks: beatTicks * 5, lyric: "", timeSec: timeSec, durSec: durSec });
@@ -687,7 +716,7 @@
         }
       });
 
-      logDebug(`🎵 主唱音軌已載入: 共 ${scoreData.length} 拍`);
+      logDebug(`🎵 主唱音軌已載入: 共 ${scoreData.length} 拍 (已降 ${Math.abs(currentOctaveShift)} 半音)`);
       renderScoreSheet();
     }
 
